@@ -1,0 +1,197 @@
+/*
+ * Copyright (C) 2013 Smap Consulting
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under the License
+ * is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
+ * or implied. See the License for the specific language governing permissions and limitations under
+ * the License.
+ */
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.List;
+import org.apache.http.HttpHost;
+import org.apache.http.HttpResponse;
+import org.apache.http.HttpStatus;
+import org.apache.http.auth.AuthScope;
+import org.apache.http.auth.UsernamePasswordCredentials;
+import org.apache.http.client.AuthCache;
+import org.apache.http.client.CredentialsProvider;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.protocol.HttpClientContext;
+import org.apache.http.entity.ContentType;
+import org.apache.http.entity.mime.MultipartEntityBuilder;
+import org.apache.http.entity.mime.content.FileBody;
+import org.apache.http.impl.auth.DigestScheme;
+import org.apache.http.impl.client.BasicAuthCache;
+import org.apache.http.impl.client.BasicCredentialsProvider;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+
+
+public class SubmitResults {
+	
+	
+    public boolean sendFile(Main parent, String hostname, String instanceFilePath, String status, 
+    		String user, String password) {	
+
+    	boolean submit_status = false;
+    	
+        //FileBody fb = null;
+        ContentType ct = null;
+        MultipartEntityBuilder entity = MultipartEntityBuilder.create();
+        
+    	String urlString = "http://" + hostname + "/submission";
+        HttpHost targetHost = new HttpHost(hostname, 443, "https");
+
+    	CredentialsProvider credsProvider = new BasicCredentialsProvider();
+        credsProvider.setCredentials(
+                new AuthScope(hostname, 443, "smap", "digest"),
+                new UsernamePasswordCredentials(user, password));
+        
+    	CloseableHttpClient httpclient = HttpClients.custom().setDefaultCredentialsProvider(credsProvider).build();
+    	
+	    // get instance file
+	    File instanceFile = new File(instanceFilePath);	
+	
+	    if (!instanceFile.exists()) {
+	    	parent.appendToStatus("	Error: Submission file " + instanceFilePath + " does not exist");
+	    } else {
+	
+	        HttpPost req = new HttpPost(URI.create(urlString));
+	        req.setHeader("form_status", status);						// smap add form_status header
+	        
+		    // find all files in parent directory
+		    File[] allFiles = instanceFile.getParentFile().listFiles();
+		
+		    // add media files ignoring invisible files and the submission file
+		    List<File> files = new ArrayList<File>();
+		    for (File f : allFiles) {
+		        String fileName = f.getName();
+		        if (!fileName.startsWith(".") && !fileName.equals(instanceFile.getName())) {	// ignore invisible files and instance xml file    
+		        	files.add(f);
+		        }
+		    }
+		    
+		    // add the submission file first...
+
+	        ct = ContentType.create("text/xml");
+            //fb = new FileBody(instanceFile, ct);
+            entity.addBinaryBody("xml_submission_file", instanceFile, ct, instanceFile.getPath());
+            //entity.addPart("xml_submission_file", fb);
+		
+
+		    for (int j = 0; j < files.size(); j++) {
+		    	
+
+	            File f = files.get(j);
+	            String fileName = f.getName();
+	            int idx = fileName.lastIndexOf(".");
+	            String extension = "";
+	            if (idx != -1) {
+	                extension = fileName.substring(idx + 1);
+	            }
+	
+	            // we will be processing every one of these, so
+	            // we only need to deal with the content type determination...
+	            if (extension.equals("xml")) {
+	            	ct = ContentType.create("text/xml");
+	            } else if (extension.equals("jpg")) {
+	            	ct = ContentType.create("image/jpeg");
+	            } else if (extension.equals("3gpp")) {
+	            	ct = ContentType.create("audio/3gpp");
+	            } else if (extension.equals("3gp")) {
+	            	ct = ContentType.create("video/3gpp");
+	            } else if (extension.equals("mp4")) {
+	            	ct = ContentType.create("video/mp4");
+	            } else if (extension.equals("csv")) {
+	            	ct = ContentType.create("text/csv");
+	            } else if (f.getName().endsWith(".amr")) {
+	            	ct = ContentType.create("audio/amr");
+	            } else if (extension.equals("xls")) {
+	            	ct = ContentType.create("application/vnd.ms-excel");
+	            }  else {
+	            	ct = ContentType.create("application/octet-stream");
+	            	parent.appendToStatus("	Info: unrecognised content type for extension " + extension);
+	               
+	            }
+		
+	            //fb = new FileBody(f, ct);
+	            //entity.addPart(f.getName(), fb);
+	            entity.addBinaryBody(f.getName(), f, ct, f.getName());
+		           
+		        parent.appendToStatus("	Info: added file " + f.getName());
+
+		    }
+		    
+	        req.setEntity(entity.build());
+			
+	        // prepare response and return uploaded
+	        HttpResponse response = null;
+	        try {
+	        	
+	            // Create AuthCache instance
+	            AuthCache authCache = new BasicAuthCache();
+	            // Generate DIGEST scheme object, initialize it and add it to the local
+	            // auth cache
+	            DigestScheme digestAuth = new DigestScheme();
+	            // Suppose we already know the realm name
+	            digestAuth.overrideParamter("realm", "smap");
+	            // Suppose we already know the expected nonce value
+	            digestAuth.overrideParamter("nonce", "whatever");
+	            authCache.put(targetHost, digestAuth);
+	        	
+	            // Add AuthCache to the execution context
+	            HttpClientContext localContext = HttpClientContext.create();
+	            localContext.setAuthCache(authCache);
+	        	
+	        	parent.appendToStatus("	Info: submitting to: " + req.getURI().toString());
+	            response = httpclient.execute(targetHost, req, localContext);
+	            int responseCode = response.getStatusLine().getStatusCode();
+	           	
+				try {
+					// have to read the stream in order to reuse the connection
+					InputStream is = response.getEntity().getContent();
+					// read to end of stream...
+					final long count = 1024L;
+					while (is.skip(count) == count)
+						;
+					is.close();
+				} catch (IOException e) {
+					e.printStackTrace();
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+	    		
+	            // verify that the response was a 201 or 202.
+	            // If it wasn't, the submission has failed.
+	        	parent.appendToStatus("	Info: Response code: " + responseCode + " : " + response.getStatusLine().getReasonPhrase());
+	            if (responseCode != HttpStatus.SC_CREATED && responseCode != HttpStatus.SC_ACCEPTED) {      
+	                parent.appendToStatus("	Error: upload failed: ");
+	            } else {
+	            	submit_status = true;
+	            }
+	        } catch (Exception e) {
+	            e.printStackTrace();    
+	            parent.appendToStatus("	Error: Generic Exception. " + e.toString());
+	        }
+	    }
+	
+	    try {
+	    	httpclient.close();
+	    } catch (Exception e) {
+	    	
+	    };
+	    
+	    return submit_status;
+	}
+
+}
+
