@@ -44,6 +44,7 @@ import org.apache.http.client.protocol.HttpClientContext;
 import org.apache.http.entity.ContentType;
 import org.apache.http.entity.mime.MultipartEntityBuilder;
 import org.apache.http.entity.mime.content.FileBody;
+import org.apache.http.impl.auth.BasicScheme;
 import org.apache.http.impl.auth.DigestScheme;
 import org.apache.http.impl.client.BasicAuthCache;
 import org.apache.http.impl.client.BasicCredentialsProvider;
@@ -87,8 +88,11 @@ public class SubmitResults {
            	urlString = "https://" + hostname + "/submission";
         	targetHost = new HttpHost(hostname, 443, "https");
         	parent.appendToStatus("	Using https");
+            //credsProvider.setCredentials(
+            //        new AuthScope(hostname, 443, "smap", "digest"),
+            //        new UsernamePasswordCredentials(user, password));
             credsProvider.setCredentials(
-                    new AuthScope(hostname, 443, "smap", "digest"),
+                    new AuthScope(hostname, 443, "smap", "basic"),
                     new UsernamePasswordCredentials(user, password));
         } else {
         	urlString = "http://" + hostname + "/submission";
@@ -191,8 +195,8 @@ public class SubmitResults {
 	        	
 	            // Create AuthCache instance
 	            AuthCache authCache = new BasicAuthCache();
-	            // Generate DIGEST scheme object, initialize it and add it to the local
-	            // auth cache
+	            
+	            // Generate DIGEST scheme object, initialize it and add it to the local auth cache
 	            DigestScheme digestAuth = new DigestScheme();
 	            // Suppose we already know the realm name
 	            digestAuth.overrideParamter("realm", "smap");
@@ -200,6 +204,10 @@ public class SubmitResults {
 	            digestAuth.overrideParamter("nonce", "whatever");
 	            authCache.put(targetHost, digestAuth);
 	        	
+	            // Generate Basic scheme object
+	            BasicScheme basicAuth = new BasicScheme();
+	            authCache.put(targetHost, basicAuth);
+	            
 	            // Add AuthCache to the execution context
 	            HttpClientContext localContext = HttpClientContext.create();
 	            localContext.setAuthCache(authCache);
